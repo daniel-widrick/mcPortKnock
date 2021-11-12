@@ -19,9 +19,103 @@ func main() {
 
 	for {
 		monitorServer(serverHostname, serverPort, 60*60, 60)
-		//Be Server
+		beServer(serverPort)
 	}
 	return
+}
+
+//Server Pretend Core
+func beServer(port int) bool {
+	listenSocket, err := net.Listen("tcp", ":"+strconv.Itoa(port))
+	if err != nil {
+		log.Fatalf("Unable to listen on port %d", port)
+		return false
+	}
+	defer listenSocket.Close()
+	for {
+		client, err := listenSocket.Accept()
+		if err != nil {
+			log.Fatalln(err)
+			return false
+		}
+		client.SetDeadline(time.Now().Add(3 * time.Second)) //Clients have 3 seconds to get what they need and leave
+		go serverClientHandler(client)                      //TODO: Channel to Exit loop from goroutine
+	}
+}
+
+func serverClientHandler(client net.Conn) {
+	defer client.Close()
+	startMinecraft := receiveHandhsake(client)
+	if startMinecraft {
+		fmt.Println("Client requesting to connect...Start server...")
+		//TODO: Send stop signal via channel
+	}
+}
+
+func receiveHandhsake(client net.Conn) bool {
+	//Receive Handshake
+	handshakeBuffer, err := receivePacket(client)
+	if err {
+		return false //keep pretending to be minecraft
+	}
+	//Extract Packet id
+	offset := 0
+	packetId, packetIdLen := binary.Uvarint(handshakeBuffer[offset:3])
+	if packetId != 0 {
+		fmt.Println("Wrong Packet ID for handshake received")
+	}
+	offset += packetIdLen
+	protocolVer, protocolVerLen := binary.Uvarint(handshakeBuffer[offset : offset+3])
+	if protocolVer != 756 {
+		fmt.Println("Wrong client protocol received")
+	}
+	offset += protocolVerLen
+
+	hostnameLen, hostnameLenLen := binary.Uvarint(handshakeBuffer[offset : offset+3])
+	offset += hostnameLenLen
+	hostname := string(handshakeBuffer[offset : offset+int(hostnameLen)])
+	offset += int(hostnameLen)
+
+	portNo := binary.BigEndian.Uint16(handshakeBuffer[offset : offset+2])
+	offset += 2
+	fmt.Printf("Received handshaked for server %s:%d\n", hostname, portNo)
+	next, _ := binary.Uvarint(handshakeBuffer[offset : offset+1])
+	if next == 1 {
+		fmt.Println("Received Next State: Status")
+		sendStatus(client)
+	} else if next == 2 {
+		fmt.Println("Received Next State: Login")
+		handleMinecraftClient(client)
+		return true //stop pretending to be minecraft
+	}
+	return false //keep pretending to be minecraft
+}
+
+func handleMinecraftClient(client net.Conn) {
+	//A client is attempting to login. //TODO: Send a friendly error to retry in 2 minutes
+}
+
+func sendStatus(client net.Conn) {
+	//Do Nothing! ?
+	//Responding should make the server show as online in the server browser...
+}
+
+func receivePacket(con net.Conn) ([]byte, bool) {
+	varintBuffer := make([]byte, 3) //max varint size
+	_, err := con.Read(varintBuffer)
+	if err != nil {
+		fmt.Println("Client Error:")
+		fmt.Println(err)
+		return varintBuffer, true
+	}
+	packetLen, intLen := binary.Uvarint(varintBuffer)
+	packetBuffer := make([]byte, packetLen)
+	copy(varintBuffer[intLen-1:], packetBuffer)
+	_, err = con.Read(packetBuffer[intLen:])
+	if err != nil {
+		return packetBuffer, true
+	}
+	return packetBuffer, false
 }
 
 //Server Monitor Code
