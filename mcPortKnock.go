@@ -20,8 +20,8 @@ func main() {
 	serverPort := 25565
 
 	for {
+		monitorServer(serverHostname, serverPort, 60*30, 10)
 		beServer(serverPort)
-		monitorServer(serverHostname, serverPort, 60*60, 10)
 	}
 }
 
@@ -134,6 +134,15 @@ func beServer(port int) bool {
 		select {
 		case d := <-done:
 			fmt.Println("Minecraft client connected...Start Server:", d)
+			_ = listenSocket.Close()
+			time.Sleep(time.Second * 3)
+			cmd := exec.Command("bash", "-c", "systemctl start minecraft")
+			err := cmd.Run()
+			if err != nil {
+				fmt.Println(err)
+				return false
+			}
+			close(done)
 			return true
 		default:
 			time.Sleep(time.Second)
