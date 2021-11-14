@@ -21,9 +21,100 @@ func main() {
 
 	for {
 		beServer(serverPort)
-		monitorServer(serverHostname, serverPort, 20, 10)
+		monitorServer(serverHostname, serverPort, 60*60, 10)
 	}
-	return
+}
+
+//Server Monitor Code
+func monitorServer(serverHostname string, serverPort int, threshold int, rate int) {
+	secondsEmpty := 0
+	fmt.Println(threshold, "::", secondsEmpty)
+	for secondsEmpty <= threshold {
+		if checkServerEmpty(serverHostname, serverPort) {
+			secondsEmpty += rate
+		} else {
+			secondsEmpty = 0
+		}
+		time.Sleep(time.Duration(rate) * time.Second)
+	}
+	//Server Has been empty passed threshold
+	cmd := exec.Command("bash", "-c", "systemctl stop minecraft")
+	err := cmd.Run()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+}
+
+func checkServerEmpty(serverHostname string, serverPort int) bool {
+	con, err := connect(serverHostname, serverPort)
+	if err != nil {
+		log.Fatalln(err)
+		return false
+	}
+	defer con.Close()
+	handShakePacket := makePacket(makeHandshake(serverHostname, uint16(serverPort)))
+	_, err = con.Write(handShakePacket)
+	if err != nil {
+		return false
+	}
+	statusPacket := makePacket(makeClientStatusPacket())
+	fmt.Println(statusPacket)
+	_, err = con.Write(statusPacket)
+	if err != nil {
+		return false
+	}
+	response := readStatusResponse(con)
+	fmt.Println("Response:", response)
+	if strings.Contains(response, "\"online\":0") {
+		fmt.Println("Server appears to be empty")
+		return true
+	} else {
+		return false
+	}
+}
+
+func connect(serverHostname string, serverPort int) (net.Conn, error) {
+	serverAddress := serverHostname + ":" + strconv.Itoa(serverPort)
+	con, err := net.Dial("tcp", serverAddress)
+	if err != nil {
+		log.Fatalln(err)
+		return nil, errors.New("Unable to connect to: " + serverAddress)
+	}
+	return con, nil
+}
+
+func makeHandshake(serverName string, port uint16) []byte {
+	var handshakeBuffer = make([]byte, 256)
+	var handshakeLen = binary.PutUvarint(handshakeBuffer, 0)              //Packet id 0x0
+	handshakeLen += binary.PutVarint(handshakeBuffer[handshakeLen:], 756) //curent protocol
+	handshakeLen += copy(handshakeBuffer[handshakeLen:], makeString(serverName))
+	binary.BigEndian.PutUint16(handshakeBuffer[handshakeLen:], port)
+	handshakeLen += 2
+	handshakeLen += binary.PutUvarint(handshakeBuffer[handshakeLen:], 1) //set state to STATUS
+	return handshakeBuffer[:handshakeLen]
+}
+
+func makeClientStatusPacket() []byte {
+	var data = make([]byte, 1)
+	data[0] = 0 //packet id
+	return data
+}
+
+func readStatusResponse(con net.Conn) string {
+	//Read Response Len
+	bufferReader := bufio.NewReader(con)
+	responseLen, e := binary.ReadUvarint(bufferReader)
+	if e != nil {
+		return ""
+	}
+	//read Response
+	responseBuffer := make([]byte, responseLen)
+	_, e = bufferReader.Read(responseBuffer)
+	if e != nil {
+		return ""
+	}
+	return string(responseBuffer[2:])
 }
 
 //Server Pretend Core
@@ -54,6 +145,7 @@ func serverClientHandler(client net.Conn) {
 	}
 }
 
+//Server Minecraft Protocol
 func receiveHandhsake(client net.Conn) bool {
 	//Receive Handshake
 	handshakeBuffer, b := receivePacket(client)
@@ -124,23 +216,6 @@ func receiveHandhsake(client net.Conn) bool {
 	return false //keep pretending to be minecraft
 }
 
-func handleMinecraftClient(client net.Conn) {
-	//A client is attempting to login.
-	disconnectReason := []byte("{\"text\": \"Server Paused... Starting Now! Please reconnect in 2 minutes\"}")
-	client.Write(makeDisconnectPacket(disconnectReason))
-	client.Close()
-}
-
-func sendStatus(client net.Conn) {
-	client.Write(makeStatusPacket())
-}
-
-func makePongPacket(payload []byte) []byte {
-	pongPacket := make([]byte, 9)
-	pongPacket[0] = 1
-	copy(pongPacket[1:], payload)
-	return makePacket(pongPacket)
-}
 func receivePing(con net.Conn) {
 	pingPacket, err := receivePacket(con)
 	if err {
@@ -163,6 +238,53 @@ func receivePing(con net.Conn) {
 	}
 }
 
+func sendStatus(client net.Conn) {
+	client.Write(makeStatusPacket())
+}
+
+func makeStatusPacket() []byte {
+	statusString := "{\"version\":{\"protocol\":756,\"name\":\"Minecraft 1.17.1\"},\"players\":{\"online\":0,\"max\":500,\"sample\":[]},\"description\":{\"color\":\"dark_aqua\",\"text\":\"A 315Gaming Server\"}}"
+	statusBytes := []byte(statusString)
+	statusBytesVarint := make([]byte, 5)
+	dataLen := uint64(len(statusBytes))
+	statusBytesVarintLen := binary.PutUvarint(statusBytesVarint, dataLen)
+	statusPacket := make([]byte, statusBytesVarintLen+len(statusBytes)+1)
+	statusPacket[0] = 0 //Packet ID
+	offset := 1
+	copy(statusPacket[offset:], statusBytesVarint[:statusBytesVarintLen])
+	offset += statusBytesVarintLen
+	copy(statusPacket[offset:], statusBytes)
+	return makePacket(statusPacket)
+}
+
+func makePongPacket(payload []byte) []byte {
+	pongPacket := make([]byte, 9)
+	pongPacket[0] = 1
+	copy(pongPacket[1:], payload)
+	return makePacket(pongPacket)
+}
+
+func handleMinecraftClient(client net.Conn) {
+	//A client is attempting to login.
+	disconnectReason := []byte("{\"text\": \"Server Paused... Starting Now! Please reconnect in 2 minutes\"}")
+	client.Write(makeDisconnectPacket(disconnectReason))
+	client.Close()
+}
+
+func makeDisconnectPacket(reason []byte) []byte {
+	reasonVarint := make([]byte, 3)
+	reasonVarintLen := binary.PutUvarint(reasonVarint, uint64(len(reason)))
+	disconnectPacket := make([]byte, len(reason)+reasonVarintLen+1)
+	disconnectPacket[0] = 0 //Packet ID
+	offset := 1
+	copy(disconnectPacket[offset:], reasonVarint[:reasonVarintLen])
+	offset += reasonVarintLen
+	copy(disconnectPacket[offset:], reason)
+	packetBytes := makePacket(disconnectPacket)
+	return packetBytes
+}
+
+//Util
 func receivePacket(con net.Conn) ([]byte, bool) {
 	bufferReader := bufio.NewReader(con)
 	responseLen, err := binary.ReadUvarint(bufferReader)
@@ -183,123 +305,6 @@ func receivePacket(con net.Conn) ([]byte, bool) {
 	return buffer, false
 }
 
-func readBytes(con net.Conn, length int) []byte {
-	readCount := 0
-	buffer := make([]byte, length)
-	for readCount < length {
-		i, err := con.Read(buffer[readCount:])
-		if err != nil {
-			return make([]byte, 0)
-		}
-		readCount += i
-		fmt.Printf("read %d of %d\n", readCount, length)
-	}
-	return buffer
-}
-
-//Server Monitor Code
-func monitorServer(serverHostname string, serverPort int, threshold int, rate int) {
-	secondsEmpty := 0
-	fmt.Println(threshold, "::", secondsEmpty)
-	for secondsEmpty <= threshold {
-		if checkServerEmpty(serverHostname, serverPort) {
-			secondsEmpty += rate
-		} else {
-			secondsEmpty = 0
-		}
-		time.Sleep(time.Duration(rate) * time.Second)
-	}
-	//Server Has been empty passed threshold
-	cmd := exec.Command("bash", "-c", "systemctl stop minecraft")
-	err := cmd.Run()
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-}
-
-func checkServerEmpty(serverHostname string, serverPort int) bool {
-	con, err := connect(serverHostname, serverPort)
-	if err != nil {
-		log.Fatalln(err)
-		return false
-	}
-	defer con.Close()
-	handShakePacket := makePacket(makeHandshake(serverHostname, uint16(serverPort)))
-	_, err = con.Write(handShakePacket)
-	if err != nil {
-		return false
-	}
-	statusPacket := makePacket(makeClientStatusPacket())
-	fmt.Println(statusPacket)
-	_, err = con.Write(statusPacket)
-	if err != nil {
-		return false
-	}
-	response := readStatusResponse(con)
-	fmt.Println("Response:", response)
-	if strings.Contains(response, "\"online\":0") {
-		fmt.Println("Server appears to be empty")
-		return true
-	} else {
-		return false
-	}
-}
-
-func connect(serverHostname string, serverPort int) (net.Conn, error) {
-	serverAddress := serverHostname + ":" + strconv.Itoa(serverPort)
-	con, err := net.Dial("tcp", serverAddress)
-	if err != nil {
-		log.Fatalln(err)
-		return nil, errors.New("Unable to connect to: " + serverAddress)
-	}
-	return con, nil
-}
-
-func readStatusResponse(con net.Conn) string {
-	//Read Response Len
-	bufferReader := bufio.NewReader(con)
-	responseLen, e := binary.ReadUvarint(bufferReader)
-	if e != nil {
-		return ""
-	}
-	//read Response
-	responseBuffer := make([]byte, responseLen)
-	_, e = bufferReader.Read(responseBuffer)
-	if e != nil {
-		return ""
-	}
-	return string(responseBuffer[2:])
-}
-
-func makeStatusPacket() []byte {
-	statusString := "{\"version\":{\"protocol\":756,\"name\":\"Minecraft 1.17.1\"},\"players\":{\"online\":0,\"max\":500,\"sample\":[]},\"description\":{\"color\":\"dark_aqua\",\"text\":\"A 315Gaming Server\"}}"
-	statusBytes := []byte(statusString)
-	statusBytesVarint := make([]byte, 5)
-	dataLen := uint64(len(statusBytes))
-	statusBytesVarintLen := binary.PutUvarint(statusBytesVarint, dataLen)
-	statusPacket := make([]byte, statusBytesVarintLen+len(statusBytes)+1)
-	statusPacket[0] = 0 //Packet ID
-	offset := 1
-	copy(statusPacket[offset:], statusBytesVarint[:statusBytesVarintLen])
-	offset += statusBytesVarintLen
-	copy(statusPacket[offset:], statusBytes)
-	return makePacket(statusPacket)
-}
-
-func makeDisconnectPacket(reason []byte) []byte {
-	reasonVarint := make([]byte, 3)
-	reasonVarintLen := binary.PutUvarint(reasonVarint, uint64(len(reason)))
-	disconnectPacket := make([]byte, len(reason)+reasonVarintLen+1)
-	disconnectPacket[0] = 0 //Packet ID
-	offset := 1
-	copy(disconnectPacket[offset:], reasonVarint[:reasonVarintLen])
-	offset += reasonVarintLen
-	copy(disconnectPacket[offset:], reason)
-	packetBytes := makePacket(disconnectPacket)
-	return packetBytes
-}
-
 func makePacket(data []byte) []byte {
 	var dataLen = uint64(len(data))
 	var packetLen = make([]byte, 5)
@@ -308,23 +313,6 @@ func makePacket(data []byte) []byte {
 	copy(packet, packetLen)           //Copy packetLen to start of packet
 	copy(packet[packetLenLen:], data) //copy data into packet
 	return packet
-}
-
-func makeClientStatusPacket() []byte {
-	var data = make([]byte, 1)
-	data[0] = 0 //packet id
-	return data
-}
-
-func makeHandshake(serverName string, port uint16) []byte {
-	var handshakeBuffer = make([]byte, 256)
-	var handshakeLen = binary.PutUvarint(handshakeBuffer, 0)              //Packet id 0x0
-	handshakeLen += binary.PutVarint(handshakeBuffer[handshakeLen:], 756) //curent protocol
-	handshakeLen += copy(handshakeBuffer[handshakeLen:], makeString(serverName))
-	binary.BigEndian.PutUint16(handshakeBuffer[handshakeLen:], port)
-	handshakeLen += 2
-	handshakeLen += binary.PutUvarint(handshakeBuffer[handshakeLen:], 1) //set state to STATUS
-	return handshakeBuffer[:handshakeLen]
 }
 
 func makeString(input string) []byte {
