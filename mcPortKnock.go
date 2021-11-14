@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os/exec"
@@ -18,8 +20,8 @@ func main() {
 	serverPort := 25565
 
 	for {
-		monitorServer(serverHostname, serverPort, 60*60, 60)
 		beServer(serverPort)
+		monitorServer(serverHostname, serverPort, 20, 10)
 	}
 	return
 }
@@ -38,8 +40,8 @@ func beServer(port int) bool {
 			log.Fatalln(err)
 			return false
 		}
-		client.SetDeadline(time.Now().Add(3 * time.Second)) //Clients have 3 seconds to get what they need and leave
-		go serverClientHandler(client)                      //TODO: Channel to Exit loop from goroutine
+		client.SetDeadline(time.Now().Add(10 * time.Second)) //Clients have 3 seconds to get what they need and leave
+		go serverClientHandler(client)                       //TODO: Channel to Exit loop from goroutine
 	}
 }
 
@@ -54,36 +56,67 @@ func serverClientHandler(client net.Conn) {
 
 func receiveHandhsake(client net.Conn) bool {
 	//Receive Handshake
-	handshakeBuffer, err := receivePacket(client)
-	if err {
+	handshakeBuffer, b := receivePacket(client)
+	if b {
 		return false //keep pretending to be minecraft
 	}
-	//Extract Packet id
-	offset := 0
-	packetId, packetIdLen := binary.Uvarint(handshakeBuffer[offset:3])
+	bufferReader := bytes.NewReader(handshakeBuffer)
+	fmt.Println("Received Handshake:")
+
+	//Packet Id
+	packetId, err := binary.ReadUvarint(bufferReader)
+	if err != nil {
+		fmt.Println("Error reading packet id", err)
+		return false
+	}
+	fmt.Println("Handshake contains packet id:", packetId)
 	if packetId != 0 {
 		fmt.Println("Wrong Packet ID for handshake received")
 	}
-	offset += packetIdLen
-	protocolVer, protocolVerLen := binary.Uvarint(handshakeBuffer[offset : offset+3])
-	if protocolVer != 756 {
-		fmt.Println("Wrong client protocol received")
+
+	//Protocol Version
+	protocolVersion, err := binary.ReadUvarint(bufferReader)
+	fmt.Println("Received protocol version:")
+	fmt.Println(protocolVersion)
+
+	//Hostname
+	hostnameLen, err := binary.ReadUvarint(bufferReader)
+	if err != nil {
+		fmt.Println("Error reading hostname len", err)
+		return false
 	}
-	offset += protocolVerLen
+	hostnameBytes := make([]byte, hostnameLen)
+	_, err = io.ReadFull(bufferReader, hostnameBytes)
+	if err != nil {
+		fmt.Println("Error reading hostname", err)
+		return false
+	}
+	hostname := string(hostnameBytes)
+	fmt.Println("read hostname ", hostname)
 
-	hostnameLen, hostnameLenLen := binary.Uvarint(handshakeBuffer[offset : offset+3])
-	offset += hostnameLenLen
-	hostname := string(handshakeBuffer[offset : offset+int(hostnameLen)])
-	offset += int(hostnameLen)
+	//Portnum
+	portNumBytes := make([]byte, 2)
+	_, err = io.ReadFull(bufferReader, portNumBytes)
+	if err != nil {
+		fmt.Println("Error reading port number", err)
+		return false
+	}
+	portNum := binary.BigEndian.Uint16(portNumBytes)
+	fmt.Println("Read portnum:", portNum)
 
-	portNo := binary.BigEndian.Uint16(handshakeBuffer[offset : offset+2])
-	offset += 2
-	fmt.Printf("Received handshaked for server %s:%d\n", hostname, portNo)
-	next, _ := binary.Uvarint(handshakeBuffer[offset : offset+1])
-	if next == 1 {
+	//Next State
+	nextState, err := binary.ReadUvarint(bufferReader)
+	if err != nil {
+		fmt.Println("Error reading next state", err)
+		return false
+	}
+	fmt.Println("Next State:", nextState)
+
+	if nextState == 1 {
 		fmt.Println("Received Next State: Status")
-		sendStatus(client)
-	} else if next == 2 {
+		receivePing(client)
+		return false
+	} else if nextState == 2 {
 		fmt.Println("Received Next State: Login")
 		handleMinecraftClient(client)
 		return true //stop pretending to be minecraft
@@ -92,30 +125,76 @@ func receiveHandhsake(client net.Conn) bool {
 }
 
 func handleMinecraftClient(client net.Conn) {
-	//A client is attempting to login. //TODO: Send a friendly error to retry in 2 minutes
+	//A client is attempting to login.
+	disconnectReason := []byte("{\"text\": \"Server Paused... Starting Now! Please reconnect in 2 minutes\"}")
+	client.Write(makeDisconnectPacket(disconnectReason))
+	client.Close()
 }
 
 func sendStatus(client net.Conn) {
-	//Do Nothing! ?
-	//Responding should make the server show as online in the server browser...
+	client.Write(makeStatusPacket())
+}
+
+func makePongPacket(payload []byte) []byte {
+	pongPacket := make([]byte, 9)
+	pongPacket[0] = 1
+	copy(pongPacket[1:], payload)
+	return makePacket(pongPacket)
+}
+func receivePing(con net.Conn) {
+	pingPacket, err := receivePacket(con)
+	if err {
+		fmt.Println("Error Receiving ping!")
+		return
+	}
+	packetId, packetIdLen := binary.Uvarint(pingPacket)
+	if packetId == 0 {
+		//Client is Requesting status
+		sendStatus(con)
+		receivePing(con) //Recurse for ping
+	} else if packetId == 1 {
+		//Client is requesting ping
+		payloadBytes := pingPacket[packetIdLen:8]
+		con.Write(makePongPacket(payloadBytes))
+		con.Close()
+	} else {
+		fmt.Printf("Received unexpected packet id: %d. Expected 1 for ping\n", packetId)
+		fmt.Println(pingPacket)
+	}
 }
 
 func receivePacket(con net.Conn) ([]byte, bool) {
-	varintBuffer := make([]byte, 3) //max varint size
-	_, err := con.Read(varintBuffer)
+	bufferReader := bufio.NewReader(con)
+	responseLen, err := binary.ReadUvarint(bufferReader)
 	if err != nil {
-		fmt.Println("Client Error:")
+		fmt.Println("Error reading length of packet")
 		fmt.Println(err)
-		return varintBuffer, true
+		return make([]byte, 0), true
 	}
-	packetLen, intLen := binary.Uvarint(varintBuffer)
-	packetBuffer := make([]byte, packetLen)
-	copy(varintBuffer[intLen-1:], packetBuffer)
-	_, err = con.Read(packetBuffer[intLen:])
+	fmt.Printf("Reading %d bytes\n", responseLen)
+	buffer := make([]byte, responseLen)
+	i, err := io.ReadFull(bufferReader, buffer)
 	if err != nil {
-		return packetBuffer, true
+		fmt.Println("Error reading packet")
+		fmt.Println(err)
+		return make([]byte, 0), true
 	}
-	return packetBuffer, false
+	fmt.Printf("read %d bytes\n", i)
+	return buffer, false
+}
+
+func readBytes(con net.Conn, length int) []byte {
+	readCount := 0
+	buffer := make([]byte, length)
+	for readCount < length {
+		i, err := con.Read(buffer[readCount:])
+		if err != nil {
+			return make([]byte, 0)
+		}
+		readCount += i
+		fmt.Printf("read %d of %d\n", readCount, length)
+	}
+	return buffer
 }
 
 //Server Monitor Code
@@ -151,7 +230,7 @@ func checkServerEmpty(serverHostname string, serverPort int) bool {
 	if err != nil {
 		return false
 	}
-	statusPacket := makePacket(makeStatusPacket())
+	statusPacket := makePacket(makeClientStatusPacket())
 	fmt.Println(statusPacket)
 	_, err = con.Write(statusPacket)
 	if err != nil {
@@ -193,6 +272,34 @@ func readStatusResponse(con net.Conn) string {
 	return string(responseBuffer[2:])
 }
 
+func makeStatusPacket() []byte {
+	statusString := "{\"version\":{\"protocol\":756,\"name\":\"Minecraft 1.17.1\"},\"players\":{\"online\":0,\"max\":500,\"sample\":[]},\"description\":{\"color\":\"dark_aqua\",\"text\":\"A 315Gaming Server\"}}"
+	statusBytes := []byte(statusString)
+	statusBytesVarint := make([]byte, 5)
+	dataLen := uint64(len(statusBytes))
+	statusBytesVarintLen := binary.PutUvarint(statusBytesVarint, dataLen)
+	statusPacket := make([]byte, statusBytesVarintLen+len(statusBytes)+1)
+	statusPacket[0] = 0 //Packet ID
+	offset := 1
+	copy(statusPacket[offset:], statusBytesVarint[:statusBytesVarintLen])
+	offset += statusBytesVarintLen
+	copy(statusPacket[offset:], statusBytes)
+	return makePacket(statusPacket)
+}
+
+func makeDisconnectPacket(reason []byte) []byte {
+	reasonVarint := make([]byte, 3)
+	reasonVarintLen := binary.PutUvarint(reasonVarint, uint64(len(reason)))
+	disconnectPacket := make([]byte, len(reason)+reasonVarintLen+1)
+	disconnectPacket[0] = 0 //Packet ID
+	offset := 1
+	copy(disconnectPacket[offset:], reasonVarint[:reasonVarintLen])
+	offset += reasonVarintLen
+	copy(disconnectPacket[offset:], reason)
+	packetBytes := makePacket(disconnectPacket)
+	return packetBytes
+}
+
 func makePacket(data []byte) []byte {
 	var dataLen = uint64(len(data))
 	var packetLen = make([]byte, 5)
@@ -203,7 +310,7 @@ func makePacket(data []byte) []byte {
 	return packet
 }
 
-func makeStatusPacket() []byte {
+func makeClientStatusPacket() []byte {
 	var data = make([]byte, 1)
 	data[0] = 0 //packet id
 	return data
