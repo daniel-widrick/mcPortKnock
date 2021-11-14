@@ -27,6 +27,8 @@ func main() {
 
 //Server Monitor Code
 func monitorServer(serverHostname string, serverPort int, threshold int, rate int) {
+	fmt.Println("Waiting for minecraft server to load..")
+	time.Sleep(time.Second * 120) //Wait for server to start
 	secondsEmpty := 0
 	fmt.Println(threshold, "::", secondsEmpty)
 	for secondsEmpty <= threshold {
@@ -35,7 +37,7 @@ func monitorServer(serverHostname string, serverPort int, threshold int, rate in
 		} else {
 			secondsEmpty = 0
 		}
-		time.Sleep(time.Duration(rate) * time.Second)
+		time.Sleep(time.Second * time.Duration(rate))
 	}
 	//Server Has been empty passed threshold
 	cmd := exec.Command("bash", "-c", "systemctl stop minecraft")
@@ -119,29 +121,46 @@ func readStatusResponse(con net.Conn) string {
 
 //Server Pretend Core
 func beServer(port int) bool {
+	fmt.Println("Emulating minecraft server and waiting for client..")
 	listenSocket, err := net.Listen("tcp", ":"+strconv.Itoa(port))
 	if err != nil {
 		log.Fatalf("Unable to listen on port %d", port)
 		return false
 	}
 	defer listenSocket.Close()
+	done := make(chan string)
+	go socketListen(listenSocket, done)
+	for {
+		select {
+		case d := <-done:
+			fmt.Println("Minecraft client connected...Start Server:", d)
+			return true
+		default:
+			time.Sleep(time.Second)
+		}
+	}
+
+}
+
+func socketListen(listenSocket net.Listener, done chan string) {
 	for {
 		client, err := listenSocket.Accept()
 		if err != nil {
-			log.Fatalln(err)
-			return false
+			fmt.Println("Failed to Accept conneciton ", err)
+			return
 		}
-		client.SetDeadline(time.Now().Add(10 * time.Second)) //Clients have 3 seconds to get what they need and leave
-		go serverClientHandler(client)                       //TODO: Channel to Exit loop from goroutine
+		client.SetDeadline(time.Now().Add(10 * time.Second))
+		go serverClientHandler(client, done)
 	}
 }
 
-func serverClientHandler(client net.Conn) {
+func serverClientHandler(client net.Conn, done chan string) {
 	defer client.Close()
 	startMinecraft := receiveHandhsake(client)
 	if startMinecraft {
 		fmt.Println("Client requesting to connect...Start server...")
 		//TODO: Send stop signal via channel
+		done <- "done"
 	}
 }
 
@@ -168,8 +187,7 @@ func receiveHandhsake(client net.Conn) bool {
 
 	//Protocol Version
 	protocolVersion, err := binary.ReadUvarint(bufferReader)
-	fmt.Println("Received protocol version:")
-	fmt.Println(protocolVersion)
+	fmt.Println("Received protocol version:", protocolVersion)
 
 	//Hostname
 	hostnameLen, err := binary.ReadUvarint(bufferReader)
