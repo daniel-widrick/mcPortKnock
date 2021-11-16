@@ -28,7 +28,7 @@ func main() {
 //Server Monitor Code
 func monitorServer(serverHostname string, serverPort int, threshold int, rate int) {
 	fmt.Println("Waiting for minecraft server to load..")
-	//time.Sleep(time.Second * 120) //Wait for server to start
+	time.Sleep(time.Second * 120) //Wait for server to start
 	secondsEmpty := 0
 	fmt.Println(threshold, "::", secondsEmpty)
 	for secondsEmpty <= threshold {
