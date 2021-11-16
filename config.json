@@ -8,5 +8,5 @@
   "startCommand": "systemctl start minecraft",
   "stopCommand": "systemctl stop minecraft",
 
-  "clientError": "Server Paused... Starting Now! Please reconnect in 2 minute"
+  "clientError": "Server Paused... Starting Now! Please reconnect in 2 minutes"
 }
