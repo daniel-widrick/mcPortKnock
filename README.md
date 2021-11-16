@@ -13,5 +13,5 @@ If a client attempts to connect to the program while in emulation mode, the clie
 The program essentially provides "on demand" access to a minecraft server that can be activated by a simple connect attempt from any Minecraft client.
 
 ## Usage
-Update the settings in config.json and run `go run mcPortKnock.go`
+Update the settings in `config.json` and run `go run mcPortKnock.go`
 Binary Releases coming Soon(tm)
