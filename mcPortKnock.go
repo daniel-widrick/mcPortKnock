@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -16,13 +18,25 @@ import (
 )
 
 func main() {
-	serverHostname := "10.68.16.220"
-	serverPort := 25565
+
+	config := loadConfig()
 
 	for {
-		monitorServer(serverHostname, serverPort, 60*30, 10)
-		beServer(serverPort)
+		monitorServer(config.server, config.port, config.emptyThreshold, config.checkRate)
+		beServer(config.port)
 	}
+}
+
+func loadConfig() Configuration {
+	file, _ := os.Open("config.json")
+	defer file.Close()
+	configuration := Configuration{}
+	decoder := json.NewDecoder(file)
+	err := decoder.Decode(&configuration)
+	if err != nil {
+		fmt.Println("Error:", err)
+	}
+	return configuration
 }
 
 //Server Monitor Code
@@ -129,6 +143,7 @@ func readStatusResponse(con net.Conn) string {
 
 //Server Pretend Core
 func beServer(port int) bool {
+	config := loadConfig()
 	fmt.Println("Emulating minecraft server and waiting for client..")
 	listenSocket, err := net.Listen("tcp", ":"+strconv.Itoa(port))
 	if err != nil {
@@ -144,7 +159,7 @@ func beServer(port int) bool {
 			fmt.Println("Minecraft client connected...Start Server:", d)
 			_ = listenSocket.Close()
 			time.Sleep(time.Second * 3)
-			cmd := exec.Command("bash", "-c", "systemctl start minecraft")
+			cmd := exec.Command("bash", "-c", config.startCommand)
 			err := cmd.Run()
 			if err != nil {
 				fmt.Println(err)
@@ -301,7 +316,8 @@ func makePongPacket(payload []byte) []byte {
 
 func handleMinecraftClient(client net.Conn) {
 	//A client is attempting to login.
-	disconnectReason := []byte("{\"text\": \"Server Paused... Starting Now! Please reconnect in 2 minutes\"}")
+	config := loadConfig()
+	disconnectReason := []byte("{\"text\": \"" + config.clientError + "\"}")
 	client.Write(makeDisconnectPacket(disconnectReason))
 	client.Close()
 }
@@ -357,4 +373,14 @@ func makeString(input string) []byte {
 	copy(output, l)
 	copy(output[lLen:], input)
 	return output
+}
+
+type Configuration struct {
+	server string
+	port int
+	emptyThreshold int
+	checkRate int
+	startCommand string
+	stopCommand string
+	clientError string
 }

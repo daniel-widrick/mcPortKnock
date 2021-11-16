@@ -1,0 +1,12 @@
+{
+  "server": "10.68.16.220",
+  "port": 25565,
+
+  "emptyThreshold": 1800,
+  "checkRate": 120,
+
+  "startCommand": "systemctl start minecraft",
+  "stopCommand": "systemctl stop minecraft",
+
+  "clientError": "Server Paused... Starting Now! Please reconnect in 2 minute"
+}
