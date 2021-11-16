@@ -28,14 +28,22 @@ func main() {
 //Server Monitor Code
 func monitorServer(serverHostname string, serverPort int, threshold int, rate int) {
 	fmt.Println("Waiting for minecraft server to load..")
-	time.Sleep(time.Second * 120) //Wait for server to start
+	//time.Sleep(time.Second * 120) //Wait for server to start
 	secondsEmpty := 0
 	fmt.Println(threshold, "::", secondsEmpty)
 	for secondsEmpty <= threshold {
-		if checkServerEmpty(serverHostname, serverPort) {
+		result := checkServerEmpty(serverHostname, serverPort)
+		if result == 0 {
 			secondsEmpty += rate
-		} else {
+		} else if result > 0 {
+			fmt.Println("Server not empty, reset timer")
 			secondsEmpty = 0
+		} else if result == -1 {
+			fmt.Println("Minecraft Server not started... Taking over")
+			return
+		} else {
+			fmt.Println("Unimplemented error")
+			return
 		}
 		time.Sleep(time.Second * time.Duration(rate))
 	}
@@ -48,31 +56,31 @@ func monitorServer(serverHostname string, serverPort int, threshold int, rate in
 	}
 }
 
-func checkServerEmpty(serverHostname string, serverPort int) bool {
+func checkServerEmpty(serverHostname string, serverPort int) int {
 	con, err := connect(serverHostname, serverPort)
 	if err != nil {
-		log.Fatalln(err)
-		return false
+		fmt.Println(err)
+		return -1
 	}
 	defer con.Close()
 	handShakePacket := makePacket(makeHandshake(serverHostname, uint16(serverPort)))
 	_, err = con.Write(handShakePacket)
 	if err != nil {
-		return false
+		return -5
 	}
 	statusPacket := makePacket(makeClientStatusPacket())
 	fmt.Println(statusPacket)
 	_, err = con.Write(statusPacket)
 	if err != nil {
-		return false
+		return -5
 	}
 	response := readStatusResponse(con)
 	fmt.Println("Response:", response)
 	if strings.Contains(response, "\"online\":0") {
 		fmt.Println("Server appears to be empty")
-		return true
+		return 0
 	} else {
-		return false
+		return 1
 	}
 }
 
@@ -80,7 +88,7 @@ func connect(serverHostname string, serverPort int) (net.Conn, error) {
 	serverAddress := serverHostname + ":" + strconv.Itoa(serverPort)
 	con, err := net.Dial("tcp", serverAddress)
 	if err != nil {
-		log.Fatalln(err)
+		fmt.Println(err)
 		return nil, errors.New("Unable to connect to: " + serverAddress)
 	}
 	return con, nil
