@@ -17,17 +17,20 @@ import (
 	"time"
 )
 
-func main() {
+//Hide the config data in a global variable... Tell no one of these sins...
+var Config Configuration
 
-	config := loadConfig()
+func main() {
+	Config = loadConfig()
 
 	for {
-		monitorServer(config.server, config.port, config.emptyThreshold, config.checkRate)
-		beServer(config.port)
+		monitorServer(Config.Server, Config.Port, Config.EmptyThreshold, Config.CheckRate)
+		beServer(Config.Port)
 	}
 }
 
 func loadConfig() Configuration {
+	fmt.Println(("Loading config.json"))
 	file, _ := os.Open("config.json")
 	defer file.Close()
 	configuration := Configuration{}
@@ -62,8 +65,7 @@ func monitorServer(serverHostname string, serverPort int, threshold int, rate in
 		time.Sleep(time.Second * time.Duration(rate))
 	}
 	//Server Has been empty passed threshold
-	config := loadConfig()
-	cmd := exec.Command("bash", "-c", config.stopCommand)
+	cmd := exec.Command("bash", "-c", Config.StopCommand)
 	err := cmd.Run()
 	if err != nil {
 		fmt.Println(err)
@@ -144,7 +146,6 @@ func readStatusResponse(con net.Conn) string {
 
 //Server Pretend Core
 func beServer(port int) bool {
-	config := loadConfig()
 	fmt.Println("Emulating minecraft server and waiting for client..")
 	listenSocket, err := net.Listen("tcp", ":"+strconv.Itoa(port))
 	if err != nil {
@@ -160,7 +161,7 @@ func beServer(port int) bool {
 			fmt.Println("Minecraft client connected...Start Server:", d)
 			_ = listenSocket.Close()
 			time.Sleep(time.Second * 3)
-			cmd := exec.Command("bash", "-c", config.startCommand)
+			cmd := exec.Command("bash", "-c", Config.StartCommand)
 			err := cmd.Run()
 			if err != nil {
 				fmt.Println(err)
@@ -294,8 +295,7 @@ func sendStatus(client net.Conn) {
 }
 
 func makeStatusPacket() []byte {
-	config := loadConfig()
-	statusString := "{\"version\":{\"protocol\":756,\"name\":\"Minecraft 1.17.1\"},\"players\":{\"online\":0,\"max\":" + config.serverMaxPlayers + ",\"sample\":[]},\"description\":{\"color\":\"dark_aqua\",\"text\":\"" + config.serverTitle + "\"}}"
+	statusString := "{\"version\":{\"protocol\":756,\"name\":\"Minecraft 1.17.1\"},\"players\":{\"online\":0,\"max\":" + Config.ServerMaxPlayers + ",\"sample\":[]},\"description\":{\"color\":\"dark_aqua\",\"text\":\"" + Config.ServerTitle + "\"}}"
 	statusBytes := []byte(statusString)
 	statusBytesVarint := make([]byte, 5)
 	dataLen := uint64(len(statusBytes))
@@ -318,8 +318,7 @@ func makePongPacket(payload []byte) []byte {
 
 func handleMinecraftClient(client net.Conn) {
 	//A client is attempting to login.
-	config := loadConfig()
-	disconnectReason := []byte("{\"text\": \"" + config.clientError + "\"}")
+	disconnectReason := []byte("{\"text\": \"" + Config.ClientError + "\"}")
 	client.Write(makeDisconnectPacket(disconnectReason))
 	client.Close()
 }
@@ -378,13 +377,13 @@ func makeString(input string) []byte {
 }
 
 type Configuration struct {
-	server           string
-	port             int
-	emptyThreshold   int
-	checkRate        int
-	startCommand     string
-	stopCommand      string
-	clientError      string
-	serverTitle      string
-	serverMaxPlayers string
+	Server           string `json:"server"`
+	Port             int    `json:"port"`
+	EmptyThreshold   int    `json:"emptyThreshold"`
+	CheckRate        int    `json:"checkRate"`
+	StartCommand     string `json:"startCommand"`
+	StopCommand      string `json:"stopCommand"`
+	ClientError      string `json:"clientError"`
+	ServerTitle      string `json:"serverTitle"`
+	ServerMaxPlayers string `json:"serverMaxPlayers"`
 }
