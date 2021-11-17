@@ -62,7 +62,8 @@ func monitorServer(serverHostname string, serverPort int, threshold int, rate in
 		time.Sleep(time.Second * time.Duration(rate))
 	}
 	//Server Has been empty passed threshold
-	cmd := exec.Command("bash", "-c", "systemctl stop minecraft")
+	config := loadConfig()
+	cmd := exec.Command("bash", "-c", config.stopCommand)
 	err := cmd.Run()
 	if err != nil {
 		fmt.Println(err)
@@ -293,7 +294,8 @@ func sendStatus(client net.Conn) {
 }
 
 func makeStatusPacket() []byte {
-	statusString := "{\"version\":{\"protocol\":756,\"name\":\"Minecraft 1.17.1\"},\"players\":{\"online\":0,\"max\":500,\"sample\":[]},\"description\":{\"color\":\"dark_aqua\",\"text\":\"A 315Gaming Server\"}}"
+	config := loadConfig()
+	statusString := "{\"version\":{\"protocol\":756,\"name\":\"Minecraft 1.17.1\"},\"players\":{\"online\":0,\"max\":" + config.serverMaxPlayers + ",\"sample\":[]},\"description\":{\"color\":\"dark_aqua\",\"text\":\"" + config.serverTitle + "\"}}"
 	statusBytes := []byte(statusString)
 	statusBytesVarint := make([]byte, 5)
 	dataLen := uint64(len(statusBytes))
@@ -376,11 +378,13 @@ func makeString(input string) []byte {
 }
 
 type Configuration struct {
-	server string
-	port int
-	emptyThreshold int
-	checkRate int
-	startCommand string
-	stopCommand string
-	clientError string
+	server           string
+	port             int
+	emptyThreshold   int
+	checkRate        int
+	startCommand     string
+	stopCommand      string
+	clientError      string
+	serverTitle      string
+	serverMaxPlayers string
 }

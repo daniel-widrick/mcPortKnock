@@ -8,5 +8,8 @@
   "startCommand": "systemctl start minecraft",
   "stopCommand": "systemctl stop minecraft",
 
-  "clientError": "Server Paused... Starting Now! Please reconnect in 2 minutes"
+  "clientError": "Server Paused... Starting Now! Please reconnect in 2 minutes",
+
+  "serverTitle": "A 315Gaming.com Server",
+  "serverMaxPlayers": "500"
 }
