@@ -45,7 +45,7 @@ func loadConfig() Configuration {
 //Server Monitor Code
 func monitorServer(serverHostname string, serverPort int, threshold int, rate int) {
 	fmt.Println("Waiting for minecraft server to load..")
-	time.Sleep(time.Second * 120) //Wait for server to start
+	time.Sleep(time.Second * 15) //Wait for server to start
 	secondsEmpty := 0
 	fmt.Println(threshold, "::", secondsEmpty)
 	for secondsEmpty <= threshold {
@@ -274,14 +274,17 @@ func receivePing(con net.Conn) {
 		fmt.Println("Error Receiving ping!")
 		return
 	}
-	packetId, packetIdLen := binary.Uvarint(pingPacket)
+	reader := bufio.NewReader(bytes.NewReader(pingPacket))
+	packetId, _ := binary.ReadUvarint(reader)
 	if packetId == 0 {
 		//Client is Requesting status
 		sendStatus(con)
 		receivePing(con) //Recurse for ping
 	} else if packetId == 1 {
 		//Client is requesting ping
-		payloadBytes := pingPacket[packetIdLen:8]
+		payloadBytes := make([]byte,8)
+		io.ReadFull(reader,payloadBytes)
+		fmt.Println("ping payload:", binary.BigEndian.Uint64(payloadBytes))
 		con.Write(makePongPacket(payloadBytes))
 		con.Close()
 	} else {
