@@ -1,0 +1,14 @@
+[Unit]
+Description=Minecraft Port Knock
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+User=root
+WorkingDirectory=/home/minecraft-202106/mcPortKnock
+ExecStart=/home/minecraft-202106/mcPortKnock/mcPortKnock
+
+[Install]
+WantedBy=multi-user.target
