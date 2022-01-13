@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildmode=default -ldflags="
 FROM $BASE_IMAGE
 
 ARG USER="nobody"
-ARG GROUP="nobody"
+ARG GROUP="nogroup"
 
 COPY --from=builder --chown=${USER}:${GROUP} /go/src/github.com/daniel-widrick/mcPortKnock/mcPortKnock /mcPortKnock
 
