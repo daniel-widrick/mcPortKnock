@@ -26,4 +26,6 @@ COPY --from=builder --chown=${USER}:${GROUP} /go/src/github.com/daniel-widrick/m
 USER ${USER}
 
 WORKDIR /mcPortKnock
+EXPOSE 25565
+
 ENTRYPOINT ["/mcPortKnock/mcPortKnock"]
