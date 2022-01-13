@@ -20,8 +20,10 @@ FROM $BASE_IMAGE
 ARG USER="nobody"
 ARG GROUP="nogroup"
 
-COPY --from=builder --chown=${USER}:${GROUP} /go/src/github.com/daniel-widrick/mcPortKnock/mcPortKnock /mcPortKnock
+RUN mkdir /mcPortKnock && chown ${USER}:${GROUP} /mcPortKnock
+COPY --from=builder --chown=${USER}:${GROUP} /go/src/github.com/daniel-widrick/mcPortKnock/mcPortKnock /mcPortKnock/mcPortKnock
 
 USER ${USER}
 
-ENTRYPOINT ["/mcPortKnock"]
+WORKDIR /mcPortKnock
+ENTRYPOINT ["/mcPortKnock/mcPortKnock"]
