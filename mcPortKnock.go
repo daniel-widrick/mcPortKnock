@@ -10,15 +10,20 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-//Hide the config data in a global variable... Tell no one of these sins...
+// Hide the config data in a global variable... Tell no one of these sins...
 var Config Configuration
+
+var currentProtocol = GetLatestProtocolVersion()
+var currentProtocolInt, _ = strconv.ParseInt(currentProtocol, 10, 64)
 
 func main() {
 	Config = loadConfig()
@@ -42,7 +47,7 @@ func loadConfig() Configuration {
 	return configuration
 }
 
-//Server Monitor Code
+// Server Monitor Code
 func monitorServer(serverHostname string, serverPort int, threshold int, rate int) {
 	fmt.Println("Waiting for minecraft server to load..")
 	time.Sleep(time.Second * 120) //Wait for server to start
@@ -113,8 +118,8 @@ func connect(serverHostname string, serverPort int) (net.Conn, error) {
 
 func makeHandshake(serverName string, port uint16) []byte {
 	var handshakeBuffer = make([]byte, 256)
-	var handshakeLen = binary.PutUvarint(handshakeBuffer, 0)              //Packet id 0x0
-	handshakeLen += binary.PutVarint(handshakeBuffer[handshakeLen:], 756) //curent protocol
+	var handshakeLen = binary.PutUvarint(handshakeBuffer, 0)                             //Packet id 0x0
+	handshakeLen += binary.PutVarint(handshakeBuffer[handshakeLen:], currentProtocolInt) //current protocol
 	handshakeLen += copy(handshakeBuffer[handshakeLen:], makeString(serverName))
 	binary.BigEndian.PutUint16(handshakeBuffer[handshakeLen:], port)
 	handshakeLen += 2
@@ -144,7 +149,7 @@ func readStatusResponse(con net.Conn) string {
 	return string(responseBuffer[2:])
 }
 
-//Server Pretend Core
+// Server Pretend Core
 func beServer(port int) bool {
 	fmt.Println("Emulating minecraft server and waiting for client..")
 	listenSocket, err := net.Listen("tcp", ":"+strconv.Itoa(port))
@@ -198,7 +203,7 @@ func serverClientHandler(client net.Conn, done chan string) {
 	}
 }
 
-//Server Minecraft Protocol
+// Server Minecraft Protocol
 func receiveHandhsake(client net.Conn) bool {
 	//Receive Handshake
 	handshakeBuffer, b := receivePacket(client)
@@ -282,8 +287,8 @@ func receivePing(con net.Conn) {
 		receivePing(con) //Recurse for ping
 	} else if packetId == 1 {
 		//Client is requesting ping
-		payloadBytes := make([]byte,8)
-		io.ReadFull(reader,payloadBytes)
+		payloadBytes := make([]byte, 8)
+		io.ReadFull(reader, payloadBytes)
 		fmt.Println("ping payload:", binary.BigEndian.Uint64(payloadBytes))
 		con.Write(makePongPacket(payloadBytes))
 		con.Close()
@@ -298,7 +303,7 @@ func sendStatus(client net.Conn) {
 }
 
 func makeStatusPacket() []byte {
-	statusString := "{\"version\":{\"protocol\":756,\"name\":\"Minecraft 1.17.1\"},\"players\":{\"online\":0,\"max\":" + Config.ServerMaxPlayers + ",\"sample\":[]},\"description\":{\"color\":\"dark_aqua\",\"text\":\"" + Config.ServerTitle + "\"}}"
+	statusString := "{\"version\":{\"protocol\":" + currentProtocol + ",\"name\":\"Minecraft 1.17.1\"},\"players\":{\"online\":0,\"max\":" + Config.ServerMaxPlayers + ",\"sample\":[]},\"description\":{\"color\":\"dark_aqua\",\"text\":\"" + Config.ServerTitle + "\"}}"
 	statusBytes := []byte(statusString)
 	statusBytesVarint := make([]byte, 5)
 	dataLen := uint64(len(statusBytes))
@@ -339,7 +344,7 @@ func makeDisconnectPacket(reason []byte) []byte {
 	return packetBytes
 }
 
-//Util
+// Util
 func receivePacket(con net.Conn) ([]byte, bool) {
 	bufferReader := bufio.NewReader(con)
 	responseLen, err := binary.ReadUvarint(bufferReader)
@@ -389,4 +394,29 @@ type Configuration struct {
 	ClientError      string `json:"clientError"`
 	ServerTitle      string `json:"serverTitle"`
 	ServerMaxPlayers string `json:"serverMaxPlayers"`
+}
+
+func GetLatestProtocolVersion() string {
+	wikiURL := "https://minecraft.fandom.com/wiki/Protocol_version"
+	response, err := http.Get(wikiURL)
+	if err != nil {
+		fmt.Println("Error fetching Wiki Page")
+		log.Fatalln(err)
+	}
+	defer response.Body.Close()
+	responseText, err := io.ReadAll(response.Body)
+	if err != nil {
+		fmt.Println("Error reading response")
+		log.Fatalln(err)
+	}
+	responseString := string(responseText)
+	startSearch := "has a protocol version of "
+	startIndex := strings.Index(responseString, startSearch) + len(startSearch)
+	versionSlice := responseString[startIndex : startIndex+10]
+	re := regexp.MustCompile("[0-9]+")
+	version := re.Find([]byte(versionSlice))
+	if version == nil {
+		log.Fatalln("No Version Number Found")
+	}
+	return string(version)
 }
