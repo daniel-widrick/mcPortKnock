@@ -1,6 +1,6 @@
 module github.com/daniel-widrick/mcPortKnock
 
-go 1.17
+go 1.19
 
 require (
 )
